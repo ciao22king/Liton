@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liton"
+version = "0.1.0"
+description = "Translate a Linux application once, remember how, and run it forever."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "EditByDrix" }]
+keywords = ["linux", "compatibility", "elf", "appimage", "translation"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Software Distribution",
+]
+
+[project.scripts]
+liton = "liton.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ciao22king/Liton"
+
+[tool.setuptools]
+packages = ["liton"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
