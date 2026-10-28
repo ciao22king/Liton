@@ -408,6 +408,24 @@ class Elf:
         return 0
 
 
+def quick_arch(path: str) -> str:
+    """Read only the ELF header's e_machine.
+
+    Enough to fingerprint a build without parsing anything else, which is what
+    lets a remembered profile be found without a full analysis.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(20)
+    except OSError:
+        return ""
+    if len(head) < 20 or head[:4] != b"\x7fELF":
+        return ""
+    endian = "<" if head[5] == 1 else ">"
+    (machine,) = struct.unpack_from(endian + "H", head, 18)
+    return machine_name(machine)
+
+
 def parse_elf(path: str) -> Elf:
     """Parse *path* and return the :class:`Elf` with ``.info`` populated."""
     elf = Elf(path)

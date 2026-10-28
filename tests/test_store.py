@@ -159,10 +159,53 @@ def test_run_translates_when_not_remembered(simple_app, capfd):
 
 
 def test_fingerprint_cache_invalidates_on_change(simple_app):
-    first = fingerprint(str(simple_app))
-    assert fingerprint(str(simple_app)) == first
+    first = fingerprint(str(simple_app), arch="x86-64")
+    assert fingerprint(str(simple_app), arch="x86-64") == first
     simple_app.write_bytes(simple_app.read_bytes() + b"\x00")
-    assert fingerprint(str(simple_app)) != first
+    assert fingerprint(str(simple_app), arch="x86-64") != first
+
+
+def test_fingerprint_does_not_read_contents(simple_app, monkeypatch):
+    """Finding a remembered profile must not hash the file."""
+    import liton.store as store
+
+    def boom(*a, **k):
+        raise AssertionError("fingerprint must not read file contents")
+
+    monkeypatch.setattr(store, "sha256_file", boom)
+    assert fingerprint(str(simple_app), arch="x86-64")
+
+
+def test_remembered_run_does_no_analysis(simple_app, monkeypatch):
+    """A second run must not re-analyse: that is the whole promise."""
+    engine = Engine(log=quiet())
+    engine.translate(str(simple_app))
+
+    import liton.runner as runner
+
+    def boom(*a, **k):
+        raise AssertionError("a remembered run must not analyse")
+
+    monkeypatch.setattr(runner, "analyze", boom)
+    assert engine.run(str(simple_app)) == 0
+
+
+def test_superseded_profiles_are_pruned(simple_app, tmp_path):
+    import shutil
+
+    copy = tmp_path / "app"
+    shutil.copy2(simple_app, copy)
+    engine = Engine(log=quiet())
+    first = engine.translate(str(copy))
+
+    src = tmp_path / "v2.c"
+    src.write_text('int main(void){return 3;}\n')
+    subprocess.run(["gcc", "-O2", str(src), "-o", str(copy)], check=True)
+    second = engine.translate(str(copy))
+
+    assert second.key != first.key
+    assert engine.store.load(first.key) is None
+    assert len(engine.store.all()) == 1
 
 
 def test_profile_json_written_atomically(simple_app):

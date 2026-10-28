@@ -6,6 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from . import elf as elfmod
 from .analyze import analyze
 from .compiler import compile_all
 from .models import Analysis, Profile, StrategyPlan
@@ -49,18 +50,38 @@ class Engine:
         artifacts = compile_all(plan, analysis, directory)
         profile = make_profile(analysis, plan, artifacts, key=key)
         self.store.save(profile)
+        self._prune_superseded(profile)
         self.log.info(f"translated -> profile {key} ({len(artifacts)} artifacts)")
         return profile
+
+    def _prune_superseded(self, keep: Profile) -> None:
+        """Drop profiles for older builds of the same path.
+
+        The application at this path has been replaced, so its previous recipes
+        can never be reached again; keeping them would grow the store without
+        bound.
+        """
+        for other in self.store.all():
+            if other.key != keep.key and other.source_path == keep.source_path:
+                self.store.delete(other.key)
+                self.log.debug(f"pruned superseded profile {other.key}")
 
     # -- execution ---------------------------------------------------------
     def run(self, path: str, args: list[str] | None = None, use_llm: bool = False,
             verify: bool = False, execute_verify: bool = False) -> int:
-        """Run *path* using its remembered profile, translating only if needed."""
+        """Run *path* using its remembered profile, translating only if needed.
+
+        The remembered path is deliberately cheap: the fingerprint is derived
+        from the file's size, mtime and ELF machine type, so no analysis is done
+        when a profile already exists.
+        """
         args = list(args or [])
         ap = os.path.abspath(path)
+        if not os.path.exists(ap):
+            self.log.error(f"no such file: {ap}")
+            return 1
 
-        analysis = analyze(ap, log=self.log)
-        key = fingerprint(ap, analysis)
+        key = fingerprint(ap, arch=elfmod.quick_arch(ap))
         profile = self.store.load(key)
 
         if profile is None:

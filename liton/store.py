@@ -19,66 +19,27 @@ from .models import SCHEMA_VERSION, Analysis, Profile, StrategyPlan
 from .util import ensure_dirs, profiles_dir, sha256_bytes, sha256_file, slugify
 
 
-def fingerprint(path: str, analysis: Analysis | None = None) -> str:
+def fingerprint(path: str, analysis: Analysis | None = None,
+                arch: str | None = None) -> str:
     """A stable identity for one exact build of an application.
 
-    Hashing a 300 MB AppImage on every launch would defeat the point of a
-    remembered profile, so the result is cached against the file's size and
-    nanosecond mtime.  Those two together change on any real rebuild; when they
-    do, the content hash is recomputed and the new key is remembered.
+    The key is derived from the absolute path, the size, the nanosecond mtime and
+    the architecture.  Those change on any real rebuild, and none of them costs a
+    read of the file's contents, so finding a remembered profile is cheap even
+    for a large AppImage.  ``analysis`` or ``arch`` may supply the machine type;
+    when neither does, the ELF header is read for it.
     """
     ap = os.path.abspath(path)
-    arch = analysis.arch if analysis else ""
+    if arch is None:
+        arch = analysis.arch if analysis else ""
     try:
         st = os.stat(ap)
         size, mtime = st.st_size, st.st_mtime_ns
     except OSError:
         size, mtime = 0, 0
 
-    cached = _stat_cache_get(ap, size, mtime, arch)
-    if cached:
-        return cached
-
-    material = f"{ap}\0{size}\0{arch}\0"
-    digest = sha256_bytes(material.encode())
-    if os.path.isfile(ap):
-        digest = sha256_bytes((digest + sha256_file(ap)).encode())
-    key = digest[:32]
-    _stat_cache_put(ap, size, mtime, arch, key)
-    return key
-
-
-def _stat_cache_path() -> Path:
-    return profiles_dir().parent / "index.json"
-
-
-def _read_stat_cache() -> dict:
-    try:
-        return json.loads(_stat_cache_path().read_text())
-    except (OSError, ValueError):
-        return {}
-
-
-def _stat_cache_get(path: str, size: int, mtime: int, arch: str) -> str | None:
-    entry = _read_stat_cache().get(path)
-    if not entry:
-        return None
-    if (entry.get("size"), entry.get("mtime"), entry.get("arch")) == (size, mtime, arch):
-        return entry.get("key")
-    return None
-
-
-def _stat_cache_put(path: str, size: int, mtime: int, arch: str, key: str) -> None:
-    cache = _read_stat_cache()
-    cache[path] = {"size": size, "mtime": mtime, "arch": arch, "key": key}
-    target = _stat_cache_path()
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name("index.json.tmp")
-        tmp.write_text(json.dumps(cache))
-        os.replace(tmp, target)
-    except OSError:
-        pass
+    material = f"{ap}\0{size}\0{mtime}\0{arch}\0"
+    return sha256_bytes(material.encode())[:32]
 
 
 def _now() -> str:
