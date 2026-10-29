@@ -64,6 +64,7 @@ class Analysis:
     format: str = "unknown"      # elf | appimage | directory | tar | pe | script | unknown
     size: int = 0
     arch: str = ""
+    sysroot: str = ""            # guest rootfs used to resolve a foreign binary
     elf: ElfInfo | None = None
     imports: ImportSurface | None = None
     resolutions: list[LibResolution] = field(default_factory=list)
@@ -91,7 +92,7 @@ class Step:
 class StrategyPlan:
     """The translated, reusable recipe for running an application."""
 
-    strategy: str = "native"       # native | shim | container | unpack
+    strategy: str = "native"       # native | shim | container | unpack | translate
     steps: list[Step] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     packages: list[str] = field(default_factory=list)
@@ -101,6 +102,7 @@ class StrategyPlan:
     source: str = "rules"          # rules | llm
     confidence: float = 0.0
     notes: list[str] = field(default_factory=list)
+    translator: dict[str, Any] = field(default_factory=dict)
 
     def describe(self) -> str:
         lines = [f"strategy={self.strategy} runtime={self.runtime} confidence={self.confidence:.2f}"]

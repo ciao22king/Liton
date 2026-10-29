@@ -169,6 +169,7 @@ def _plan_to_dict(p: StrategyPlan) -> dict:
         "ld_library_path": p.ld_library_path,
         "preload": p.preload,
         "notes": p.notes,
+        "translator": p.translator,
         "steps": [
             {"kind": s.kind, "detail": s.detail, "params": s.params, "reason": s.reason}
             for s in p.steps
@@ -189,6 +190,7 @@ def plan_from_dict(data: dict) -> StrategyPlan:
         ld_library_path=list(data.get("ld_library_path", [])),
         preload=list(data.get("preload", [])),
         notes=list(data.get("notes", [])),
+        translator=dict(data.get("translator") or {}),
     )
     for raw in data.get("steps", []):
         p.steps.append(Step(raw.get("kind", ""), raw.get("detail", ""),

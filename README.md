@@ -47,9 +47,10 @@ it as fast as a native binary, even offline, even after a reboot.
    undefined dynamic symbols and the required *symbol versions* (`GLIBC_2.38` and
    friends). Nothing is executed, so analysing an untrusted binary is safe.
 2. **Plan** — a rule engine turns that analysis into a strategy (`native`,
-   `shim`, `container`, `unpack`) and a list of typed steps: install these
-   packages, prepend this `LD_LIBRARY_PATH`, use the app's own loader, unpack the
-   AppImage, run it in a container because the host's libraries are too old.
+   `shim`, `container`, `unpack`, `translate`) and a list of typed steps: install
+   these packages, prepend this `LD_LIBRARY_PATH`, use the app's own loader,
+   unpack the AppImage, run it in a container because the host's libraries are
+   too old, or *translate it* because it is built for another architecture.
    An optional LLM can refine the plan; Liton works fully offline without one.
 3. **Compile** — the plan becomes plain, inspectable artifacts: `run.sh`,
    `run.env`, `install-deps.sh` and, when needed, a `Dockerfile`.
@@ -68,17 +69,47 @@ it as fast as a native binary, even offline, even after a reboot.
   found. Liton compares the required symbol versions against the ones the host
   library actually exports and escalates to a container with a new enough base
   image when they do not match.
-* **Foreign architectures** — an `aarch64` binary on an `x86-64` host, which
-  needs emulation.
+* **Foreign architectures** — an `aarch64` binary on an `x86-64` host, or an
+  `x86-64` binary on an ARM host. Liton picks the best translation backend the
+  machine has (FEX, box64/box86, or QEMU user-mode) and remembers the choice.
 * **AppImages, tarballs, Windows `.exe`, scripts, directories** — each gets the
   right treatment instead of a wrong one.
 * **Capabilities** — X11, Wayland, OpenGL, Vulkan, ALSA, PulseAudio, PipeWire,
   DBus, GTK, Qt, and more, detected from the imported symbols, so the environment
   and container device mounts are set up correctly.
 
+## Real translation, not just a description
+
+For a binary built for another architecture, Liton does the actual translation
+work. It chooses a backend by preference and remembers it in the profile:
+
+| Backend | Guest → host | When it is chosen |
+|---|---|---|
+| **FEX** | x86-64 / i386 → aarch64 | an ARM host; the fast choice |
+| **box64** / **box86** | x86-64 / i386 → arm, riscv64 | low-end ARM, Raspberry Pi |
+| **QEMU user-mode** | anything → anything | the universal fallback |
+
+The first launch pays for translation. Liton then pins the translator's own
+cache **inside the profile**, so it survives between runs — that is what turns
+"translate it again" into "translate it once". For FEX this is
+`FEX_APP_CACHE_LOCATION` and `FEX_APP_DATA_LOCATION`; the guest rootfs is
+recorded as `FEX_ROOTFS`. QEMU gets its cross sysroot via `-L` / `QEMU_LD_PREFIX`.
+
+For a foreign binary, Liton resolves its `NEEDED` libraries against the **guest
+sysroot**, not the host's, because the host's libraries are the wrong
+architecture. Install one with, for example:
+
+```console
+$ sudo apt install qemu-user-static gcc-aarch64-linux-gnu   # aarch64 guest
+```
+
+`liton doctor` reports which backends and sysroots are available.
+
 ## Install
 
-Liton is pure Python 3 (3.10+) with **no third-party dependencies**.
+Liton is pure Python 3 (3.10+) with **no third-party dependencies**. The
+translation backends (FEX, box64, QEMU) are separate programs Liton drives; it
+uses whichever is installed and needs none of them for native applications.
 
 ```console
 $ pip install .
@@ -128,12 +159,14 @@ $ liton translate --llm ./app
 
 ## Scope and honesty
 
-Liton makes a binary *start correctly* on a Linux host it was not built for. It
-does not recompile machine code for another architecture, and it does not
-translate Windows API calls. Where a translation genuinely needs a different
-userspace, Liton says so and compiles a container recipe rather than pretending.
-The strategy it chose and its confidence are always recorded in the profile, and
-`liton verify` reports what it could and could not confirm.
+Liton makes an application *run* on a Linux host it was not built for. For a
+foreign architecture it drives a real translator (FEX, box64 or QEMU) and
+remembers the translated code cache, so the work is paid once. It does not
+recompile machine code itself, and it does not translate Windows API calls.
+Where a translation genuinely needs a different userspace, Liton says so and
+compiles a container recipe rather than pretending. The strategy, the chosen
+backend and the confidence are always recorded in the profile, and `liton
+verify` reports what it could and could not confirm.
 
 ## Development
 
@@ -142,8 +175,10 @@ $ python3 -m pytest
 ```
 
 The test suite builds real C binaries with the system compiler and exercises the
-whole pipeline on them, and cross-checks the ELF parser against `readelf` on the
-system's own executables.
+whole pipeline on them, cross-checks the ELF parser against `readelf` on the
+system's own executables, and — when a cross-compiler and a translator are
+present — builds a binary for another architecture and proves it runs through
+Liton end to end.
 
 ## License
 

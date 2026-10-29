@@ -101,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"profile {profile.key}")
             print(f"strategy {profile.plan.get('strategy')} "
                   f"(confidence {profile.plan.get('confidence')})")
+            tr = (profile.plan or {}).get("translator") or {}
+            if tr:
+                print(f"translator {tr.get('kind')} "
+                      f"({tr.get('guest_arch')} on {tr.get('host_arch')}) via {tr.get('path')}")
             if profile.plan.get("packages"):
                 print("packages " + ", ".join(profile.plan["packages"]))
             print(f"artifacts in {store.profile_dir(profile.key)}")

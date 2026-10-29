@@ -7,6 +7,7 @@ possible, so the stages can be tested in isolation.
 ```
 liton/elf.py       ELF structures (pure python, no execution)
 liton/analyze.py   format detection, dependency resolution, capability inference
+liton/foreign.py   translation backends: FEX / box64 / QEMU, and sysroots
 liton/planner.py   rules (+ optional LLM) -> StrategyPlan
 liton/compiler.py  StrategyPlan -> artifacts on disk
 liton/store.py     fingerprint-keyed profiles: the memory
@@ -61,17 +62,39 @@ choosing a container with a new enough base image.
 `plan_rules` is the primary planner and needs no network. It produces a
 `StrategyPlan`:
 
-* `strategy` — `native`, `shim`, `container` or `unpack`;
+* `strategy` — `native`, `shim`, `container`, `unpack` or `translate`;
 * `steps` — typed, ordered instructions (`install_packages`, `unpack`,
-  `ld_library_path`, `use_loader`, `use_runtime`, `exec`);
-* `env`, `packages`, `ld_library_path`, `preload`, `runtime`, `confidence`.
+  `ld_library_path`, `use_loader`, `use_runtime`, `translate`, `exec`);
+* `env`, `packages`, `ld_library_path`, `preload`, `runtime`, `translator`,
+  `confidence`.
 
 The rules escalate in a fixed order: a Windows PE goes to a Wine container; a
-foreign architecture goes to an emulating container; a present-but-too-old
-library goes to a newer base image; a missing library becomes a package
-installation; a bundle's private libraries become an `LD_LIBRARY_PATH` entry; a
-bundle's own loader becomes a loader override (which makes the strategy a
-`shim`).
+foreign architecture is *translated* by a real backend (`liton/foreign.py`) and
+only falls back to an emulating container when none is installed; a
+present-but-too-old library goes to a newer base image; a missing library becomes
+a package installation; a bundle's private libraries become an `LD_LIBRARY_PATH`
+entry; a bundle's own loader becomes a loader override (which makes the strategy
+a `shim`).
+
+### Choosing a translation backend
+
+`foreign.choose` picks by preference for the guest/host pair:
+
+| Backend | Guest → host | Notes |
+|---|---|---|
+| FEX | x86-64 / i386 → aarch64 | fast; has a JIT code cache |
+| box64 / box86 | x86-64 / i386 → arm, riscv64 | low-end ARM |
+| QEMU user-mode | anything → anything | universal fallback |
+
+The `probe` argument is injectable, so the decision is unit-tested without any
+backend installed. The chosen `Translator` is serialised into the plan, so the
+decision is made once and remembered with the rest of the recipe.
+
+For a foreign binary, analysis resolves `NEEDED` against the **guest sysroot**
+(`analyze(..., guest_sysroot=...)`), because the host's libraries are the wrong
+architecture; symbol-version checks are skipped in that case as they would
+compare against the wrong libc. The sysroot is found by `foreign.find_sysroot`
+(an explicit `LITON_SYSROOT` wins, then the standard `*-linux-gnu` locations).
 
 `plan_llm` is optional and strictly additive. It asks any OpenAI-compatible model
 to refine the plan, validates the reply with `plan_from_dict` (unknown step kinds
@@ -87,12 +110,21 @@ shell can run:
 * `run.env` — the environment (`LD_LIBRARY_PATH`, `LD_PRELOAD`, variables).
 * `install-deps.sh` — installs the packages that provide the missing libraries.
 * `run.sh` — the entrypoint: unpacks a rootfs if needed, sources `run.env`,
-  optionally goes through the app's own loader, and execs the target.
+  optionally goes through the app's own loader or a translator, and execs the
+  target.
 * `Dockerfile` — only for container plans.
 
 Everything is quoted with `shlex.quote`, and the AppImage rootfs is extracted
 once and cached inside the profile directory, so the second run skips the
 extraction too.
+
+For a `translate` plan the runner pins the backend's caches **inside the
+profile**, which is what makes the translation persist rather than repeat. For
+FEX that is `FEX_APP_DATA_LOCATION` and `FEX_APP_CACHE_LOCATION` (the JIT code
+cache), plus `FEX_ROOTFS` when a guest rootfs was found; a rootfs installed later
+is accepted at run time through `LITON_FEX_ROOTFS`. QEMU gets `-L <sysroot>` and
+`QEMU_LD_PREFIX`. A missing translator is a clean `exit 127` with a message, not
+a confusing "Exec format error" from the kernel.
 
 ## Stage 4 — Remember
 
@@ -129,6 +161,9 @@ that the recorded libraries still resolve on this host, and that the dynamic
 loader can resolve the target (via `ld.so --list`, which does not run the
 program's code). With `--execute` it goes further and actually launches the
 program, treating "still running after the timeout" as success for a GUI app.
+
+`liton doctor` additionally reports the translation backends it found (`fex`,
+`box64`, `box86`), the QEMU user-mode binaries present, and any FEX rootfs.
 
 ## Testing
 

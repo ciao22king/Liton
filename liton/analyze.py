@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import elf as elfmod
 from .models import Analysis, ElfInfo, ImportSurface, LibResolution
-from .util import Log, native_arch, sha256_file
+from .util import Log, debian_arch, native_arch, sha256_file
 
 APPIMAGE_MAGIC_OFFSET = 8
 
@@ -271,7 +271,8 @@ def _is_tar(path: str) -> bool:
         return False
 
 
-def analyze(path: str, log: Log | None = None, host: HostLibraryIndex | None = None) -> Analysis:
+def analyze(path: str, log: Log | None = None, host: HostLibraryIndex | None = None,
+            guest_sysroot: str = "") -> Analysis:
     """Analyse *path* and return a populated :class:`Analysis`."""
     log = log or Log("warn")
     path = os.path.abspath(path)
@@ -284,8 +285,34 @@ def analyze(path: str, log: Log | None = None, host: HostLibraryIndex | None = N
         a.elf = elf.info
         a.arch = elf.info.machine
         a.imports = _import_surface(elf)
-        _resolve(a, elf, host or HostLibraryIndex(log=log), log)
-        _check_symbol_versions(a, elf, log)
+
+        foreign = bool(a.arch) and a.arch != native_arch()
+        sysroot = guest_sysroot
+        if foreign and not sysroot:
+            from .foreign import find_sysroot
+
+            sysroot = find_sysroot(a.arch)
+        a.sysroot = sysroot
+
+        if foreign:
+            # A foreign binary's NEEDED names refer to the *guest* libraries, so
+            # resolve them in the guest sysroot; the host's libraries are the
+            # wrong architecture and cannot satisfy them.
+            index = HostLibraryIndex(extra_dirs=_sysroot_lib_dirs(sysroot), log=log,
+                                     only_extra=bool(sysroot))
+            if not sysroot:
+                index = None
+            _resolve(a, elf, index, log)
+            if sysroot:
+                a.notes.append(f"resolved against guest sysroot {sysroot}")
+            else:
+                a.notes.append(
+                    f"{a.arch} libraries cannot be resolved on this {native_arch()} host; "
+                    f"install a cross sysroot (libc6-dev-{debian_arch(a.arch)}-cross) "
+                    f"or use a container")
+        else:
+            _resolve(a, elf, host or HostLibraryIndex(log=log), log)
+            _check_symbol_versions(a, elf, log)
     elif fmt == "directory":
         a.notes.append("directory input: analysis limited to the entry executable")
     elif fmt == "pe":
@@ -299,9 +326,16 @@ def analyze(path: str, log: Log | None = None, host: HostLibraryIndex | None = N
         a.notes.append("unrecognised format: no ELF translation possible")
 
     if a.elf and a.elf.machine and a.elf.machine != native_arch():
-        a.notes.append(
-            f"foreign architecture {a.elf.machine} on a {native_arch()} host: needs an emulator or container"
-        )
+        from .foreign import choose
+
+        backend = choose(a.elf.machine, log=log)
+        if backend:
+            a.notes.append(f"{a.elf.machine} binary: translated by {backend.describe()}")
+        else:
+            a.notes.append(
+                f"foreign architecture {a.elf.machine} on a {native_arch()} host: no "
+                f"translator installed (FEX, box64, qemu-user-static)"
+            )
     return a
 
 
@@ -377,7 +411,24 @@ def _import_surface(elf: elfmod.Elf) -> ImportSurface:
     return ImportSurface(libraries=libs, symbols=symbols, groups=groups)
 
 
-def _resolve(a: Analysis, elf: elfmod.Elf, host: HostLibraryIndex, log: Log) -> None:
+def _sysroot_lib_dirs(sysroot: str) -> list[str]:
+    """Library directories inside a guest sysroot, in loader search order."""
+    if not sysroot:
+        return []
+    out: list[str] = []
+    for rel in ("lib", "usr/lib", "lib64", "usr/lib64", "lib/x86_64-linux-gnu",
+                "usr/lib/x86_64-linux-gnu", "lib/aarch64-linux-gnu",
+                "usr/lib/aarch64-linux-gnu", "lib/arm-linux-gnueabihf",
+                "usr/lib/arm-linux-gnueabihf", "lib/i386-linux-gnu",
+                "usr/lib/i386-linux-gnu", "lib/riscv64-linux-gnu",
+                "usr/lib/riscv64-linux-gnu"):
+        d = os.path.join(sysroot, rel)
+        if os.path.isdir(d):
+            out.append(d)
+    return out
+
+
+def _resolve(a: Analysis, elf: elfmod.Elf, host: HostLibraryIndex | None, log: Log) -> None:
     search: list[str] = []
     for d in (elf.info.rpath + elf.info.runpath):
         cand = os.path.normpath(os.path.join(os.path.dirname(a.path), d))
@@ -390,15 +441,19 @@ def _resolve(a: Analysis, elf: elfmod.Elf, host: HostLibraryIndex, log: Log) -> 
         # Prefer a library the application itself ships next to it.
         found = local.find(soname)
         source = "profile" if found else ""
-        if not found:
+        if not found and host is not None:
             found = host.find(soname)
             source = "host" if found else ""
         if found:
             res.resolved = True
             res.path = found
             res.source = source
-        else:
+        elif host is not None:
             a.missing.append(soname)
+        else:
+            # No index at all: the library's presence is simply unknown, which is
+            # different from knowing it is absent.
+            res.source = "unknown"
         pkg = SONAME_PACKAGES.get(soname)
         if not pkg and found:
             pkg = package_for_path(found)

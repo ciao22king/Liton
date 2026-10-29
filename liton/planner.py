@@ -13,6 +13,7 @@ import os
 from typing import Any
 
 from .analyze import HostLibraryIndex
+from .foreign import Translator, choose
 from .models import Analysis, Step, StrategyPlan
 from .util import Log, native_arch
 
@@ -99,14 +100,31 @@ def plan_rules(a: Analysis, log: Log | None = None) -> StrategyPlan:
         p.notes.append("the AppImage rootfs is cached in the profile and reused on every run")
         p.confidence = 0.7
 
+    # Foreign architecture: this is real translation, not a container fallback.
     if a.elf and a.elf.machine and a.elf.machine != native_arch():
-        p.strategy = "container"
-        p.runtime = "docker"
-        p.steps.append(Step("use_runtime", "docker",
-                            {"image": f"multiarch/qemu-user-static:latest"},
-                            reason=f"foreign architecture {a.elf.machine} needs emulation"))
-        p.notes.append("cross-architecture: a container with binfmt/qemu is required")
-        p.confidence = 0.5
+        tr = choose(a.elf.machine, log=log)
+        if tr:
+            p.strategy = "translate"
+            p.translator = tr.to_dict()
+            p.steps.append(Step("translate", tr.describe(),
+                                {"translator": tr.to_dict()},
+                                reason=f"{a.elf.machine} code runs on {native_arch()} "
+                                       f"through {tr.name}"))
+            p.notes.append(f"translation backend: {tr.describe()}")
+            for note in tr.notes:
+                p.notes.append(note)
+            p.confidence = max(p.confidence, 0.7)
+        else:
+            p.strategy = "container"
+            p.runtime = "docker"
+            p.steps.append(Step("use_runtime", "docker",
+                                {"image": f"multiarch/qemu-user-static:latest"},
+                                reason=f"no translator installed for {a.elf.machine}; "
+                                       f"a container with binfmt is the remaining option"))
+            p.notes.append(
+                f"no translation backend for {a.elf.machine} on {native_arch()}; "
+                f"install FEX, box64 or qemu-user-static for real translation")
+            p.confidence = 0.4
 
     # Missing libraries -> install them, then expose them.
     if a.missing:
@@ -301,8 +319,8 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 VALID_KINDS = {"install_packages", "unpack", "set_env", "ld_library_path",
-               "preload", "use_loader", "use_runtime", "exec"}
-VALID_STRATEGIES = {"native", "shim", "container", "unpack"}
+               "preload", "use_loader", "use_runtime", "exec", "translate"}
+VALID_STRATEGIES = {"native", "shim", "container", "unpack", "translate"}
 
 
 def plan_from_dict(data: dict[str, Any]) -> StrategyPlan:

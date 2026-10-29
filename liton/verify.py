@@ -153,6 +153,24 @@ def _execute_profile(profile: Profile, timeout: float) -> tuple[bool, str]:
 
 def doctor() -> dict:
     """Report the host capabilities Liton can rely on."""
+    from .foreign import FEX_BINARIES, QEMU_GUEST, find_fex_rootfs
+
+    def first(names):
+        for n in names:
+            found = shutil.which(n)
+            if found:
+                return found
+        return ""
+
+    translators = {
+        "fex": first(FEX_BINARIES),
+        "box64": shutil.which("box64") or "",
+        "box86": shutil.which("box86") or "",
+    }
+    qemu = {arch: first((f"{base}-static", base))
+            for arch, base in QEMU_GUEST.items()}
+    qemu = {a: p for a, p in qemu.items() if p}
+
     return {
         "arch": _uname_arch(),
         "apt": bool(shutil.which("apt-get")),
@@ -162,6 +180,9 @@ def doctor() -> dict:
         "display": bool(os.environ.get("DISPLAY")),
         "wayland": bool(os.environ.get("WAYLAND_DISPLAY")),
         "llm": bool(os.environ.get("LITON_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")),
+        "translators": {k: v for k, v in translators.items() if v},
+        "qemu_user": qemu,
+        "fex_rootfs": find_fex_rootfs(),
     }
 
 
