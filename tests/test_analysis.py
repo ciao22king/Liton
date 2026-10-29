@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 
-from liton.analyze import HostLibraryIndex, SONAME_PACKAGES, analyze, detect_format
+from liton.analysis import HostLibraryIndex, SONAME_PACKAGES, analyze, detect_format
 
 
 def test_detects_elf(simple_app):
@@ -111,7 +111,7 @@ def test_version_conflict_detected_against_old_library(tmp_path):
     sp.run([gcc, "-shared", "-fPIC", str(stub_src), "-Wl,--version-script=" + str(vmap),
             "-o", str(stub)], check=True)
 
-    from liton.analyze import _check_symbol_versions
+    from liton.analysis import _check_symbol_versions
     from liton.models import Analysis, LibResolution
     from liton.util import Log
     from liton import elf as elfmod

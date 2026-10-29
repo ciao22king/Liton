@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .analyze import analyze
+from .analysis import analyze
 from .models import LitonError
 from .planner import make_plan
 from .runner import Engine
@@ -67,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="report host capabilities")
     sub.add_parser("home", help="print the profile store location")
+
+    u = sub.add_parser("update", help="check for and install a newer Liton")
+    u.add_argument("--check", action="store_true",
+                   help="only report whether an update exists")
+    u.add_argument("--force", action="store_true",
+                   help="install even if the version looks current")
     return p
 
 
@@ -82,7 +88,7 @@ def _load_profile(store: Store, ref: str):
         return profile
     ap = os.path.abspath(ref)
     if os.path.exists(ap):
-        from .analyze import analyze as _analyze
+        from .analysis import analyze as _analyze
 
         key = fingerprint(ap, _analyze(ap, log=Log("error")))
         return store.load(key)
@@ -96,6 +102,10 @@ def main(argv: list[str] | None = None) -> int:
     store = engine.store
 
     try:
+        if args.command == "update":
+            return _cmd_update(args, log)
+
+        _maybe_auto_update(args, log)
         if args.command == "translate":
             profile = engine.translate(args.path, use_llm=args.llm, force=args.force)
             print(f"profile {profile.key}")
@@ -201,6 +211,49 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
     return 0
+
+
+def _cmd_update(args, log: Log) -> int:
+    """`liton update`: check for, and unless --check, install a newer version."""
+    from . import __version__
+    from .update import apply_update, check_update
+
+    info = check_update(__version__)
+    if info.error:
+        log.error(info.error)
+        return 2
+    print(f"current {info.current}  latest {info.latest}  "
+          f"({info.install.describe()}, source: {info.source or 'none'})")
+    if not info.available:
+        if not args.force:
+            print("already up to date")
+            return 0
+        print("--force: reinstalling the current version")
+        info.available = True
+    if args.check:
+        print(f"update available: {info.latest} -> {info.url}")
+        return 0
+    result = apply_update(info, log=log)
+    for note in result.notes:
+        log.debug(note)
+    if result.applied:
+        print(f"updated to {info.latest}; restart the command to use it")
+        return 0
+    log.error(result.error or "update failed")
+    return 1
+
+
+def _maybe_auto_update(args, log: Log) -> None:
+    """Run an automatic update, but only for cheap informational commands."""
+    from . import __version__
+    from .update import AUTO_UPDATE_COMMANDS, maybe_auto_update
+
+    if getattr(args, "command", "") not in AUTO_UPDATE_COMMANDS:
+        return
+    try:
+        maybe_auto_update(__version__, log=log)
+    except Exception as exc:  # an update must never break the command itself
+        log.debug(f"auto-update skipped: {exc}")
 
 
 def plan_pkg(profile, soname: str) -> str:

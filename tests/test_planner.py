@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from liton.analyze import analyze
+from liton.analysis import analyze
 from liton.llm import LLMClient, LLMUnavailable
 from liton.planner import (make_plan, plan_from_dict, plan_llm, plan_rules)
 

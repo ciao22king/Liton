@@ -12,7 +12,7 @@ import json
 import os
 from typing import Any
 
-from .analyze import HostLibraryIndex
+from .analysis import HostLibraryIndex
 from .foreign import Translator, choose
 from .models import Analysis, Step, StrategyPlan
 from .util import Log, native_arch
@@ -201,7 +201,7 @@ def _suggest_base_image(a: Analysis) -> str:
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
-    from .analyze import _version_key
+    from .analysis import _version_key
 
     return _version_key(version)
 

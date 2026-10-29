@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from . import elf as elfmod
-from .analyze import analyze
+from .analysis import analyze
 from .compiler import compile_all
 from .models import Analysis, Profile, StrategyPlan
 from .planner import make_plan

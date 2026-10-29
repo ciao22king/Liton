@@ -16,7 +16,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .analyze import HostLibraryIndex
+from .analysis import HostLibraryIndex
 from .models import Profile
 from .store import plan_from_dict
 from .util import Log

@@ -111,11 +111,57 @@ Liton is pure Python 3 (3.10+) with **no third-party dependencies**. The
 translation backends (FEX, box64, QEMU) are separate programs Liton drives; it
 uses whichever is installed and needs none of them for native applications.
 
+The one-step way is the build script, which tests and installs in one go:
+
+```console
+$ git clone https://github.com/ciao22king/Liton && cd Liton
+$ ./build.sh
+```
+
+It finds a Python 3.10+, copes with a PEP 668 "externally managed" environment,
+and accepts:
+
+```console
+./build.sh --user        install into your home (default when not root)
+./build.sh --system      install system-wide (needs root or sudo)
+./build.sh --venv        install into a virtual environment under .venv
+./build.sh --prefix DIR  install under a prefix
+./build.sh --no-test     skip the test suite
+./build.sh --check       syntax-check only
+./build.sh --test        run the tests only
+./build.sh --uninstall   remove an installed copy
+./build.sh --clean       remove build artefacts
+```
+
+Or do it by hand:
+
 ```console
 $ pip install .
-# or run it straight from a checkout:
+# or run it straight from a checkout, with no install at all:
 $ python3 -m liton doctor
 ```
+
+### Keeping it up to date
+
+```console
+$ liton update            install a newer Liton if there is one
+$ liton update --check    only report whether one exists
+```
+
+Liton knows how it was installed: a git checkout updates with `git pull
+--ff-only`, a pip install updates with `pip install --upgrade`. It reads the
+remote's tags directly, so it needs no token and cannot be rate-limited.
+
+If you would rather it kept itself current, opt in:
+
+```console
+$ export LITON_AUTO_UPDATE=1
+```
+
+Then Liton checks at most **once a day**, and only before cheap informational
+commands (`list`, `show`, `doctor`, `home`, `analyze`). It never runs on the
+`run` path, where an update appearing mid-launch would be a surprise. The check
+is off by default, and `LITON_REPO` points it at a fork if you have one.
 
 ## Usage
 
@@ -130,10 +176,26 @@ liton forget <key|path>     delete a remembered profile
 liton verify <key|path>     verify a profile resolves and can launch
 liton doctor                report host capabilities
 liton home                  print the profile store location
+liton update                check for and install a newer Liton
 ```
 
 Useful flags: `--llm` (let an LLM refine the plan), `--force` (re-translate),
-`--verify` / `--execute-verify` (check before launching).
+`--verify` / `--execute-verify` (check before launching), `--sysroot DIR`
+(guest libraries for a foreign binary).
+
+Liton can also be used as a library, with a lazy public surface so importing it
+stays instant:
+
+```python
+from liton import Engine, analyze, plan_rules
+
+analysis = analyze("./SomeApp")      # static analysis, no execution
+plan = plan_rules(analysis)          # the recipe
+
+engine = Engine()
+profile = engine.translate("./SomeApp")   # compile and remember it
+engine.run("./SomeApp")                    # hash, look up, run
+```
 
 ### The profile store
 
@@ -171,7 +233,19 @@ verify` reports what it could and could not confirm.
 ## Development
 
 ```console
+$ ./build.sh --test      # or:
 $ python3 -m pytest
+```
+
+The layout is one module per pipeline stage; `docs/internals.md` is the tour, and
+`CHANGELOG.md` records what changed in each release.
+
+```
+liton/elf.py      pure-python ELF reader          liton/store.py     profiles (the memory)
+liton/analysis.py  format detection, dependencies  liton/runner.py    translate / remember / run
+liton/foreign.py  FEX / box64 / QEMU backends     liton/verify.py    prove a profile resolves
+liton/planner.py  rules (+ optional LLM)          liton/update.py    self-update
+liton/compiler.py plan -> artifacts on disk       liton/cli.py       the command line
 ```
 
 The test suite builds real C binaries with the system compiler and exercises the

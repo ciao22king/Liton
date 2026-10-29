@@ -6,16 +6,23 @@ possible, so the stages can be tested in isolation.
 
 ```
 liton/elf.py       ELF structures (pure python, no execution)
-liton/analyze.py   format detection, dependency resolution, capability inference
+liton/analysis.py   format detection, dependency resolution, capability inference
 liton/foreign.py   translation backends: FEX / box64 / QEMU, and sysroots
 liton/planner.py   rules (+ optional LLM) -> StrategyPlan
 liton/compiler.py  StrategyPlan -> artifacts on disk
 liton/store.py     fingerprint-keyed profiles: the memory
 liton/runner.py    Engine: translate / remember / run
 liton/verify.py    prove a profile resolves and launches
+liton/update.py    self-update: version check, install, opt-in auto-update
 liton/llm.py       optional OpenAI-compatible client
 liton/cli.py       argument parsing and output
 ```
+
+> The analyser module is `liton/analysis.py`, not `liton/analyze.py`, on purpose.
+> The package re-exports the function `analyze`, and an exported name must never
+> equal a submodule name: importing a submodule rebinds that attribute on the
+> package, so `from liton import analyze` would silently hand back the module
+> instead of the function. `tests/test_packaging.py` guards this.
 
 ## Stage 1 — Analyse
 
@@ -36,7 +43,7 @@ The dynamic symbol count is derived from `DT_GNU_HASH` (or the legacy
 and are stripped in some builds. There is a section-header fallback for the rare
 case where no hash table is present.
 
-`liton/analyze.py` then classifies the input (`elf`, `appimage`, `pe`, `tar`,
+`liton/analysis.py` then classifies the input (`elf`, `appimage`, `pe`, `tar`,
 `zip`, `script`, `directory`, `unknown`), resolves every `NEEDED` soname against
 the app's own directories and then the host's, and infers capabilities from the
 imported symbols (X11, Wayland, OpenGL, ALSA, PulseAudio, DBus, GTK, Qt, …).
@@ -153,6 +160,24 @@ leave a half-written profile.
 record the outcome (`runs`, `last_result`) back into the profile. If there is no
 profile for the build, it translates first — so `liton run` is always correct,
 and `liton translate` exists only to do the work ahead of time.
+
+## Stage 6 — Update
+
+`liton/update.py` keeps an installed Liton current. It first works out *how*
+this copy was installed — a git checkout (walk up for `.git`) updates with
+`git pull --ff-only`, anything else updates with `pip install --upgrade`. It
+reads the remote's tags with `git ls-remote` and falls back to the GitHub tags
+API, so no token is needed and there is no rate limit. Versions are compared
+numerically, so `0.10.0` is newer than `0.9.0`.
+
+Automatic updating is **opt-in** (`LITON_AUTO_UPDATE=1`) and throttled to once a
+day, and only ever runs before cheap informational commands (`list`, `show`,
+`doctor`, `home`, `analyze`) — never on the `run` path, where an update appearing
+mid-launch would be a surprise. The throttle stamp is written *before* the
+network work, so a failing source cannot cause a check on every invocation.
+
+Every external effect (the network fetch, the command runner) is an injectable
+callable, which is why the whole module is tested without a network or a pip.
 
 ## Verification
 

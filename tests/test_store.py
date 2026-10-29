@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from liton.analyze import analyze
+from liton.analysis import analyze
 from liton.runner import Engine
 from liton.store import Store, fingerprint, make_profile, plan_from_dict
 from liton.util import Log

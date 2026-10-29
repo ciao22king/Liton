@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 
-from liton.analyze import analyze
+from liton.analysis import analyze
 from liton.cli import main
 from liton.compiler import (compile_all, compile_dockerfile, compile_env,
                             compile_install, compile_runner)
@@ -171,3 +171,82 @@ def test_cli_doctor_and_home(capsys):
 def test_cli_missing_path_errors(capsys):
     rc = main(["translate", "/no/such/file"])
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# `liton update`
+# ---------------------------------------------------------------------------
+
+def test_cli_update_reports_up_to_date(monkeypatch, capsys):
+    from liton import cli, update
+
+    monkeypatch.setattr(update, "detect_install",
+                        lambda: update.InstallInfo(kind="pip"))
+    monkeypatch.setattr(update, "fetch_versions",
+                        lambda *a, **k: (["v0.0.1"], "tags"))
+    assert main(["update", "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "already up to date" in out
+
+
+def test_cli_update_check_reports_an_available_version(monkeypatch, capsys):
+    from liton import update
+
+    monkeypatch.setattr(update, "detect_install",
+                        lambda: update.InstallInfo(kind="pip"))
+    monkeypatch.setattr(update, "fetch_versions",
+                        lambda *a, **k: (["v99.0.0"], "tags"))
+    assert main(["update", "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "update available: v99.0.0" in out
+
+
+def test_cli_update_applies_using_the_injected_runner(monkeypatch, capsys):
+    from liton import update
+
+    ran = []
+    monkeypatch.setattr(update, "detect_install",
+                        lambda: update.InstallInfo(kind="pip", spec="x"))
+    monkeypatch.setattr(update, "fetch_versions",
+                        lambda *a, **k: (["v99.0.0"], "tags"))
+    monkeypatch.setattr(update, "_default_run",
+                        lambda cmd, cwd=None, timeout=None: (ran.append(cmd), (0, "ok", ""))[1])
+    assert main(["update"]) == 0
+    assert ran, "pip should have been invoked"
+    assert "updated to v99.0.0" in capsys.readouterr().out
+
+
+def test_cli_update_errors_when_the_source_is_unreachable(monkeypatch, capsys):
+    from liton import update
+
+    def boom():
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(update, "detect_install",
+                        lambda: update.InstallInfo(kind="pip"))
+    monkeypatch.setattr(update, "_git_tags", lambda run: [])
+    monkeypatch.setattr(update, "_api_tags", boom)
+    assert main(["update", "--check"]) == 2
+    assert "could not reach" in capsys.readouterr().err
+
+
+def test_cli_auto_update_never_runs_on_the_run_path(monkeypatch, simple_app):
+    from liton import update
+
+    def forbidden(*a, **k):
+        raise AssertionError("auto-update must not run for `run`")
+
+    monkeypatch.setenv(update.AUTO_ENV, "1")
+    monkeypatch.setattr(update, "maybe_auto_update", forbidden)
+    # `run` is not in AUTO_UPDATE_COMMANDS, so the hook is never even reached.
+    assert main(["run", str(simple_app)]) == 0
+
+
+def test_cli_auto_update_is_invoked_for_an_informational_command(monkeypatch, capsys):
+    from liton import update
+
+    seen = []
+    monkeypatch.setattr(update, "maybe_auto_update",
+                        lambda current, log=None: seen.append(current))
+    assert main(["home"]) == 0
+    assert seen, "doctor/list/home should offer the auto-update hook"
