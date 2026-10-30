@@ -7,6 +7,7 @@ network, never run pip, and never modify the running installation.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -83,11 +84,27 @@ def test_latest_version_empty():
 # Install detection
 # ---------------------------------------------------------------------------
 
-def test_detect_install_finds_this_checkout():
-    info = detect_install()
+def test_detect_install_finds_a_checkout(tmp_path):
+    # Build a fake checkout rather than assuming this test runs inside one: an
+    # installed or sdist copy has no .git, which is not a bug in Liton.
+    checkout = tmp_path / "src"
+    package = checkout / "liton"
+    package.mkdir(parents=True)
+    (checkout / ".git").mkdir()
+    info = detect_install(start=package)
     assert info.kind == "git"
-    assert info.root
+    assert info.root == str(checkout)
     assert "git checkout" in info.describe()
+
+
+def test_detect_install_this_copy_is_git_or_pip():
+    # Whatever the surrounding directory looks like, detection must be coherent.
+    info = detect_install()
+    assert info.kind in ("git", "pip")
+    if info.kind == "git":
+        assert info.root and (Path(info.root) / ".git").exists()
+    else:
+        assert info.spec.startswith("git+https://github.com/")
 
 
 def test_detect_install_falls_back_to_pip(monkeypatch):

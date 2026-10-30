@@ -24,6 +24,19 @@ def isolated_home(tmp_path, monkeypatch):
     yield home
 
 
+#: The `missing_dep_app` fixture deletes the SDL2 it linked against, so the app
+#: genuinely lacks it -- unless the host happens to ship `libSDL2-2.0.so.0`,
+#: which every desktop Linux does. That made these tests pass on a bare CI image
+#: and fail on a real machine (including inside `build.sh`). Tell the analyser to
+#: treat it as absent, so the outcome is the same everywhere.
+ASSUME_MISSING = "libSDL2-2.0.so.0"
+
+
+@pytest.fixture(autouse=True)
+def assume_missing_sdl2(monkeypatch):
+    monkeypatch.setenv("LITON_ASSUME_MISSING", ASSUME_MISSING)
+
+
 def _cc(source: str, out: Path, *flags: str) -> Path:
     src = out.with_suffix(".c")
     src.write_text(source)

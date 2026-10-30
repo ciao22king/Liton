@@ -160,3 +160,53 @@ def test_host_index_finds_libc():
     found = index.find("libc.so.6")
     assert found is not None
     assert os.path.exists(found)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic results regardless of what the host has installed
+# ---------------------------------------------------------------------------
+
+def test_assumed_missing_overrides_a_present_host_library(missing_dep_app, monkeypatch):
+    """A host that really has the library must still be able to model its absence.
+
+    `missing_dep_app` links SDL2 and then deletes it, but a desktop host ships
+    `libSDL2-2.0.so.0`, so without the override the app resolves cleanly and the
+    "missing dependency" path is never exercised. That is a real host-dependence
+    bug, not a hypothetical one.
+    """
+    monkeypatch.setenv("LITON_ASSUME_MISSING", "libSDL2-2.0.so.0")
+    a = analyze(str(missing_dep_app))
+    assert "libSDL2-2.0.so.0" in a.missing
+    assert a.package_hints["libSDL2-2.0.so.0"] == "libsdl2-2.0-0"
+
+
+def test_known_missing_argument_overrides_a_present_host_library(missing_dep_app):
+    a = analyze(str(missing_dep_app), known_missing=["libSDL2-2.0.so.0"])
+    assert "libSDL2-2.0.so.0" in a.missing
+
+
+def test_assumed_missing_is_empty_by_default(monkeypatch):
+    monkeypatch.delenv("LITON_ASSUME_MISSING", raising=False)
+    from liton.analysis import _assumed_missing
+    assert _assumed_missing() == frozenset()
+
+
+def test_assumed_missing_parses_a_colon_separated_list(monkeypatch):
+    monkeypatch.setenv("LITON_ASSUME_MISSING", "liba.so.1:libb.so.2")
+    from liton.analysis import _assumed_missing
+    assert _assumed_missing() == frozenset({"liba.so.1", "libb.so.2"})
+
+
+def test_installed_sdl2_does_not_change_the_fixture_outcome(missing_dep_app, monkeypatch):
+    """The point of the fixture: the result is the same whether or not the host
+    happens to ship SDL2."""
+    monkeypatch.setenv("LITON_ASSUME_MISSING", "libSDL2-2.0.so.0")
+    with_sdl2_present = analyze(str(missing_dep_app)).missing
+
+    monkeypatch.delenv("LITON_ASSUME_MISSING")
+    without_override = analyze(str(missing_dep_app)).missing
+
+    assert with_sdl2_present == ["libSDL2-2.0.so.0"]
+    # Without the override the host decides: either it is absent (bare image) or
+    # it resolves (desktop). Both are valid; the fixture forces the first.
+    assert without_override in ([], ["libSDL2-2.0.so.0"])

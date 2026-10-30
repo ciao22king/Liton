@@ -4,6 +4,29 @@ Notable changes to Liton, newest first. This project follows semantic
 versioning; the version in `liton/__init__.py` is the one that matters, and the
 git tag of the same name marks the release.
 
+## 0.3.1 — 2026-10-30
+
+A test-suite fix that matters to anyone installing from source on a real
+machine. No behaviour change for the translation itself.
+
+### Fixed
+
+- **The test suite depended on what the host had installed.** The
+  `missing_dep_app` fixture links an application against `libSDL2-2.0.so.0` and
+  then deletes it, so the application genuinely lacks it — unless the host ships
+  that library, which every desktop Linux does. On such a machine the library
+  resolved, nothing was missing, and six tests failed. It passed on a bare CI
+  image and failed on a real one, including inside `build.sh`, so `./build.sh`
+  could not install for exactly the users Liton targets. The analyser now accepts
+  `LITON_ASSUME_MISSING` (or an explicit `known_missing` argument) to treat named
+  sonames as absent, and the suite uses it.
+- **`test_detect_install_finds_this_checkout` assumed it ran inside a git
+  checkout.** An extracted release tarball has no `.git`, so the test failed
+  there. It now builds its own fake checkout, and a separate test checks that
+  detection is coherent wherever it runs.
+- `detect_install()` gained an optional `start` argument so the git branch is
+  testable without being inside a repository.
+
 ## 0.3.0 — 2026-10-29
 
 The release that makes Liton a thing you install and then keep current.

@@ -125,10 +125,14 @@ def _find_git_root(start: Path, levels: int = 6) -> str:
     return ""
 
 
-def detect_install() -> InstallInfo:
-    """Work out whether this Liton is a git checkout or a pip install."""
+def detect_install(start: Path | None = None) -> InstallInfo:
+    """Work out whether this Liton is a git checkout or a pip install.
+
+    *start* overrides where the search begins; it defaults to the installed
+    package directory and exists so the git branch is testable anywhere.
+    """
     package_dir = Path(__file__).resolve().parent
-    root = _find_git_root(package_dir)
+    root = _find_git_root(start or package_dir)
     if root:
         return InstallInfo(kind="git", root=root, package_dir=str(package_dir))
     return InstallInfo(

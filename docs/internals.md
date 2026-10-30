@@ -26,6 +26,14 @@ liton/cli.py       argument parsing and output
 
 ## Stage 1 — Analyse
 
+A result must not depend on what the host happens to have installed. Resolution
+is therefore overridable: `LITON_ASSUME_MISSING` (colon-separated sonames) or the
+`known_missing` argument to `analyze()` makes the analyser treat those sonames as
+absent even when the host provides them. The test suite needs this — the
+"missing dependency" fixture links SDL2 and deletes it, but a desktop host ships
+`libSDL2-2.0.so.0`, so without the override the missing-dependency path is never
+exercised and six tests fail on a real machine while passing on a bare CI image.
+
 `liton/elf.py` reads the file itself rather than shelling out to `readelf` or
 `ldd`. Two reasons: `ldd` executes the loader, which is exactly what you must not
 do to an untrusted binary; and parsing the bytes makes the whole stage a pure

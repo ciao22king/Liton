@@ -13,6 +13,7 @@ import struct
 import subprocess
 import tarfile
 from pathlib import Path
+from typing import Iterable
 
 from . import elf as elfmod
 from .models import Analysis, ElfInfo, ImportSurface, LibResolution
@@ -264,6 +265,19 @@ def detect_format(path: str) -> str:
     return "unknown"
 
 
+def _assumed_missing() -> frozenset[str]:
+    """Sonames to treat as absent, from ``LITON_ASSUME_MISSING`` (colon-separated).
+
+    A host that really has a library (SDL2 on any desktop) resolves it, so an
+    application linked against it is *not* missing anything -- correct, but it
+    makes the outcome depend on the machine. This override lets a caller analyse
+    against a target environment that lacks those libraries, which is what the
+    test suite needs to stay deterministic across hosts.
+    """
+    raw = os.environ.get("LITON_ASSUME_MISSING", "")
+    return frozenset(part for part in raw.split(":") if part)
+
+
 def _is_tar(path: str) -> bool:
     try:
         return tarfile.is_tarfile(path)
@@ -272,12 +286,18 @@ def _is_tar(path: str) -> bool:
 
 
 def analyze(path: str, log: Log | None = None, host: HostLibraryIndex | None = None,
-            guest_sysroot: str = "") -> Analysis:
-    """Analyse *path* and return a populated :class:`Analysis`."""
+            guest_sysroot: str = "", known_missing: Iterable[str] = ()) -> Analysis:
+    """Analyse *path* and return a populated :class:`Analysis`.
+
+    *known_missing* names sonames that must be treated as absent even if the host
+    happens to provide them. It exists for tests and for probing an application
+    against a target environment other than the machine running the analysis.
+    """
     log = log or Log("warn")
     path = os.path.abspath(path)
     fmt = detect_format(path)
     a = Analysis(path=path, format=fmt)
+    known_missing = frozenset(known_missing) | _assumed_missing()
 
     if fmt in ("elf", "appimage"):
         a.size = os.path.getsize(path)
@@ -302,7 +322,7 @@ def analyze(path: str, log: Log | None = None, host: HostLibraryIndex | None = N
                                      only_extra=bool(sysroot))
             if not sysroot:
                 index = None
-            _resolve(a, elf, index, log)
+            _resolve(a, elf, index, log, known_missing)
             if sysroot:
                 a.notes.append(f"resolved against guest sysroot {sysroot}")
             else:
@@ -311,7 +331,8 @@ def analyze(path: str, log: Log | None = None, host: HostLibraryIndex | None = N
                     f"install a cross sysroot (libc6-dev-{debian_arch(a.arch)}-cross) "
                     f"or use a container")
         else:
-            _resolve(a, elf, host or HostLibraryIndex(log=log), log)
+            _resolve(a, elf, host or HostLibraryIndex(log=log), log,
+                     known_missing)
             _check_symbol_versions(a, elf, log)
     elif fmt == "directory":
         a.notes.append("directory input: analysis limited to the entry executable")
@@ -428,7 +449,8 @@ def _sysroot_lib_dirs(sysroot: str) -> list[str]:
     return out
 
 
-def _resolve(a: Analysis, elf: elfmod.Elf, host: HostLibraryIndex | None, log: Log) -> None:
+def _resolve(a: Analysis, elf: elfmod.Elf, host: HostLibraryIndex | None, log: Log,
+             known_missing: frozenset[str] = frozenset()) -> None:
     search: list[str] = []
     for d in (elf.info.rpath + elf.info.runpath):
         cand = os.path.normpath(os.path.join(os.path.dirname(a.path), d))
@@ -439,9 +461,9 @@ def _resolve(a: Analysis, elf: elfmod.Elf, host: HostLibraryIndex | None, log: L
     for soname in elf.info.needed:
         res = LibResolution(soname=soname)
         # Prefer a library the application itself ships next to it.
-        found = local.find(soname)
+        found = None if soname in known_missing else local.find(soname)
         source = "profile" if found else ""
-        if not found and host is not None:
+        if not found and host is not None and soname not in known_missing:
             found = host.find(soname)
             source = "host" if found else ""
         if found:

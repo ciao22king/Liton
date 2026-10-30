@@ -18,7 +18,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 #: Public names, mapped to the module that defines them. No exported name may
 #: equal a submodule name: importing a submodule rebinds that attribute on the
